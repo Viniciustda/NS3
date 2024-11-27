@@ -93,7 +93,7 @@ class TcpApp : public Application {
         void StopApplication() override;                 // Sobrescreve o encerramento da aplicação
 
         // Callbacks para conexões e recepção de pacotes
-        void HandleConnectionAccept (Ptr<Socket> s, const Address& from);
+        void HandleConnectionAccept (Ptr<Socket> socket, const Address& from);
         void ProcessReceivedPacket (Ptr<Socket> socket);
         void EstablishNeighborLink (Ipv4Address neighbor_address);
         void ConnectionSucceeded(Ptr<Socket> socket);
