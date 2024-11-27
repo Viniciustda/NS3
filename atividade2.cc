@@ -1,126 +1,243 @@
-#include "ns3/core-module.h"
-#include "ns3/network-module.h"
-#include "ns3/internet-module.h"
-#include "ns3/wifi-module.h"
-#include "ns3/mobility-module.h"
-#include "ns3/applications-module.h"
-#include <random>
+#include "ns3/core-module.h"             // Módulo central do NS-3 (simulação de eventos, logs, etc.)
+#include "ns3/network-module.h"          // Módulo para abstrações de rede
+#include "ns3/internet-module.h"         // Módulo para pilha de protocolos TCP/IP
+#include "ns3/wifi-module.h"             // Módulo para simulações WiFi
+#include "ns3/mobility-module.h"         // Módulo para configurar mobilidade dos nós
+#include "ns3/applications-module.h"     // Módulo para criar aplicações na simulação
+#include <netinet/in.h>                  // Biblioteca padrão para conversão de ordem de bytes
+#include <random>                        // Biblioteca para geração de números aleatórios
 
 using namespace ns3;
+#define NUM_NODES 5                      // Define o número de nós na simulação
 
-NS_LOG_COMPONENT_DEFINE("LinearTopologySimulation");
+NS_LOG_COMPONENT_DEFINE("Atividade2");   // Define o componente de log para "Atividade2"
 
 // Função para gerar números aleatórios
-int GenerateRandomNumber() {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(0, 100);
-    return dis(gen);
+int GenerateRandomValue() {
+
+    static std::random_device rd;                       // Semente para o gerador de números aleatórios
+    static std::mt19937 gen(rd());                      // Gerador Mersenne Twister
+    static std::uniform_int_distribution<> dis(0, 100); // Distribuição uniforme no intervalo [0, 100]
+
+    return dis(gen);                                   // Retorna um número aleatório
 }
 
-// Função de envio de dados
-void SendData(Ptr<Socket> socket, Address destAddress, int data) {
-    if (!socket) {
-        NS_LOG_ERROR("Socket inválido! Envio abortado.");
-        return;
-    }
-    NS_LOG_INFO("Enviando dado: " << data << " para " << InetSocketAddress::ConvertFrom(destAddress).GetIpv4());
-    Ptr<Packet> packet = Create<Packet>((uint8_t *)&data, sizeof(data));
-    socket->SendTo(packet, 0, destAddress);
+// Classe TcpApp: representa a aplicação para cada nó na rede TCP
+class TcpApp : public Application {
+
+    public:
+
+        TcpApp();                                         // Construtor
+        virtual ~TcpApp();                                // Destrutor
+
+        static TypeId GetTypeId (void);                  // Retorna o TypeId da aplicação
+        void ConfigureApplication (int id,Ptr<Node> node,Ptr<Socket> sender_socket,Ptr<Socket> receiver_socket,Ipv4Address right_neighbor_ip,Ipv4Address left_neighbor_ip,bool generator);
+
+        void StartApplication() override;                // Sobrescreve a inicialização da aplicação
+        void StopApplication() override;                 // Sobrescreve o encerramento da aplicação
+
+        // Callbacks para conexões e recepção de pacotes
+        void HandleConnectionAccept (Ptr<Socket> s, const Address& from);
+        void ProcessReceivedPacket (Ptr<Socket> socket);
+        void EstablishNeighborLink (Ipv4Address neighbor_address);
+        void ConnectionSucceeded(Ptr<Socket> socket);
+        void ConnectionFailed(Ptr<Socket> socket);
+        bool ValidateConnection(Ptr<Socket> socket, const Address& from);
+
+        void SendPacket (int32_t number);               // Envia pacotes para um vizinho
+
+        // Variaveis
+        int id;                                         // Índice do nó
+        Ptr<Node> node;                                 // Nó associado à aplicação
+        Ptr<Socket> sender_socket;                      // Socket para enviar pacotes
+        Ptr<Socket> receiver_socket;                    // Socket para receber pacotes
+        uint16_t port = 8080;                           // Porta de recepção
+        bool generator;                                 // Indica se o nó é gerador de número
+        Ipv4Address right_neighbor_ip;                  // Endereço IP do vizinho direito
+        Ipv4Address left_neighbor_ip;                   // Endereço IP do vizinho esquerdo
+};
+
+// Construtor da aplicação
+TcpApp::TcpApp() {
+    sender_socket = 0;
+    receiver_socket = 0;
+    generator = false;
 }
 
-// Função de recepção de dados
-void ReceiveData(Ptr<Socket> socket) {
-    NS_LOG_INFO("Recepção de dados iniciada no Nó " << socket->GetNode()->GetId());
-    Address from;
-    Ptr<Packet> packet = socket->RecvFrom(from);
+// Destrutor da aplicação
+TcpApp::~TcpApp() {
+    sender_socket = 0;
+    receiver_socket = 0;
+}
 
-    if (!packet) {
-        NS_LOG_ERROR("Erro ao receber o pacote!");
-        return;
+/// Registra o TypeId da aplicação
+TypeId TcpApp::GetTypeId(void) {
+
+    static TypeId tid = TypeId("TcpApp")
+        .SetParent<Application>()      // Define como uma subclasse de Application
+        .AddConstructor<TcpApp>();     // Permite a criação de objetos da classe
+    return tid;
+}
+
+// Configuração inicial da aplicação
+void TcpApp::ConfigureApplication (int id,Ptr<Node> node,Ptr<Socket> sender_socket,Ptr<Socket> receiver_socket,Ipv4Address right_neighbor_ip,Ipv4Address left_neighbor_ip,bool generator = false) {
+    
+    this->id = id;
+    this->node = node;
+    this->sender_socket = sender_socket;
+    this->receiver_socket = receiver_socket;
+    this->right_neighbor_ip = right_neighbor_ip;
+    this->left_neighbor_ip = left_neighbor_ip;
+    this->generator = generator;
+}
+
+// Método chamado ao iniciar a aplicação
+void TcpApp::StartApplication (void) {
+
+    // Criação de sockets para envio e recepção de pacotes
+    Ptr<Socket> receiver_socket = Socket::CreateSocket (this->node, TcpSocketFactory::GetTypeId ());
+    Ptr<Socket> sender_socket = Socket::CreateSocket (this->node, TcpSocketFactory::GetTypeId ());
+
+    // Configuração do socket receptor
+    InetSocketAddress local = InetSocketAddress(Ipv4Address::GetAny(), port);
+    if (receiver_socket->Bind(local) == -1) {
+      NS_FATAL_ERROR("Failed to bind socket");
+    }
+    receiver_socket->Listen();
+    receiver_socket->SetAcceptCallback(
+      MakeCallback(&TcpApp::ValidateConnection, this),
+      MakeCallback(&TcpApp::HandleConnectionAccept, this)
+    );
+
+    this->receiver_socket = receiver_socket;
+    this->sender_socket = sender_socket;
+
+    // O primeiro nó gera e envia o primeiro número
+    if(this->id == 0){
+        int32_t number =  GenerateRandomValue();
+        EstablishNeighborLink(this->left_neighbor_ip);
+        SendPacket(number);
+    }
+}
+
+// Método chamado ao encerrar a aplicação
+void TcpApp::StopApplication(void) {
+
+    if (this->receiver_socket) {
+        this->receiver_socket->Close();
+        this->receiver_socket = nullptr;
     }
 
-    int receivedData;
-    packet->CopyData((uint8_t *)&receivedData, sizeof(receivedData));
+    if (this->sender_socket) {
+        this->sender_socket->Close();
+        this->sender_socket = nullptr;
+    }
+    NS_LOG_UNCOND("Aplicação encerrada");
+}
 
-    Ptr<Node> node = socket->GetNode();
-    uint32_t nodeId = node->GetId();
-    NS_LOG_INFO("Nó " << nodeId << " recebeu valor: " << receivedData << " de " << InetSocketAddress::ConvertFrom(from).GetIpv4());
+// Callback chamado quando uma conexão é aceita
+void TcpApp::HandleConnectionAccept(Ptr<Socket> s, const Address& from) {
+    s->SetRecvCallback(MakeCallback(&TcpApp::ProcessReceivedPacket, this));
+}
 
-    // Determinar o próximo nó e encaminhar
-    Address nextAddress;
-    int newData;
+// Callback chamado ao receber um pacote
+void TcpApp::ProcessReceivedPacket(Ptr<Socket> socket) {
 
-    if (nodeId == 1) {
-        if (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.1")) {
-            NS_LOG_INFO("Nó 1 recebeu de N0. Encaminhando para N2.");
-            nextAddress = InetSocketAddress(Ipv4Address("10.0.0.3"), 8002);
-            SendData(socket, nextAddress, receivedData);
-        } else {
-            NS_LOG_INFO("Nó 1 recebeu de N2. Gerando novo valor e encaminhando para N2.");
-            newData = GenerateRandomNumber();
-            nextAddress = InetSocketAddress(Ipv4Address("10.0.0.3"), 8002);
-            SendData(socket, nextAddress, newData);
+    Address from;                        // Endereço do remetente do pacote
+    Ptr<Packet> packet;                  // Ponteiro para o pacote recebido
+    int32_t networkOrderNumber;          // Número no formato de ordem de rede
+    int32_t receivedNumber = 0;          // Número recebido (convertido para ordem do host)
+
+    // Cria um novo socket para envio, reutilizável nas operações de resposta
+    Ptr<Socket> sender_socket = Socket::CreateSocket(this->node, TcpSocketFactory::GetTypeId());
+    this->sender_socket = sender_socket;
+
+    // Loop para processar todos os pacotes recebidos
+    while ((packet = socket->RecvFrom(from))) {
+        if (packet->GetSize() == 0) {     // Se o pacote estiver vazio, interrompe o loop
+            break;
         }
-    } else if (nodeId == 4) {
-        newData = GenerateRandomNumber();
-        NS_LOG_INFO("Nó 4 gerou novo valor: " << newData << " e está encaminhando para N3.");
-        nextAddress = InetSocketAddress(Ipv4Address("10.0.0.4"), 8003);
-        SendData(socket, nextAddress, newData);
-    } else if (nodeId == 2 || nodeId == 3) {
-        if (nodeId == 2) {
-            NS_LOG_INFO("Nó 2 recebeu de "
-                        << (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.2") ? "N1" : "N3")
-                        << ", encaminhando para "
-                        << (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.2") ? "N3" : "N1") << ".");
-            nextAddress = InetSocketAddress(
-                (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.2"))
-                    ? Ipv4Address("10.0.0.4")
-                    : Ipv4Address("10.0.0.2"),
-                (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.2")) ? 8003 : 8001);
-        } else {
-            NS_LOG_INFO("Nó 3 recebeu de "
-                        << (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.4") ? "N4" : "N2")
-                        << ", encaminhando para "
-                        << (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.4") ? "N2" : "N4") << ".");
-            nextAddress = InetSocketAddress(
-                (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.4"))
-                    ? Ipv4Address("10.0.0.3")
-                    : Ipv4Address("10.0.0.5"),
-                (InetSocketAddress::ConvertFrom(from).GetIpv4() == Ipv4Address("10.0.0.4")) ? 8002 : 8004);
+
+        // Converte o endereço do remetente para InetSocketAddress para obter o IP
+        InetSocketAddress inetFrom = InetSocketAddress::ConvertFrom(from);
+
+        // Copia os dados do pacote para a variável networkOrderNumber
+        packet->CopyData((uint8_t *)&networkOrderNumber, sizeof(networkOrderNumber));
+        receivedNumber = ntohl(networkOrderNumber); // Converte o número para ordem do host
+
+        // Exibe o número recebido no log
+        NS_LOG_UNCOND("no: " << this->id << " recebeu: " << receivedNumber);
+
+        // Verifica condições específicas para o nó 1. N1 passa a gerar pacote e envia para N2, N0 nao participa mais da simulacao
+        if (this->id == 1 && inetFrom.GetIpv4() == "10.0.0.1") {
+            this->left_neighbor_ip = this->right_neighbor_ip;            // Atualiza o vizinho esquerdo
+            this->generator = true;                                      // Define o nó como extremidade
+            EstablishNeighborLink(this->right_neighbor_ip);              // Conecta ao próximo nó
+            SendPacket(receivedNumber);                                  // Envia o pacote recebido
+            continue;                                                    // Continua para o próximo pacote
         }
-        SendData(socket, nextAddress, receivedData);
+
+        // Se o nó for uma extremidade, gera um novo número aleatório
+        if (this->generator) {
+            receivedNumber = GenerateRandomValue();
+            EstablishNeighborLink(this->left_neighbor_ip);  // Conecta ao vizinho esquerdo
+        } else {
+            // Se o pacote veio do vizinho direito, conecta ao vizinho esquerdo
+            if (this->right_neighbor_ip == inetFrom.GetIpv4()) {
+                EstablishNeighborLink(this->left_neighbor_ip);
+            } else { // Caso contrário, conecta ao vizinho direito
+                EstablishNeighborLink(this->right_neighbor_ip);
+            }
+        }
+
+        // Envia o número para o próximo nó
+        SendPacket(receivedNumber);
     }
 }
 
-// Callback para aceitar conexões e configurar o receptor
-void AcceptConnection(Ptr<Socket> socket, const Address &from) {
-    if (!socket) {
-        NS_LOG_ERROR("Socket inválido na aceitação de conexão!");
-        return;
-    }
-    NS_LOG_INFO("Conexão aceita por Nó " << socket->GetNode()->GetId()
-                                          << " de " << InetSocketAddress::ConvertFrom(from).GetIpv4());
-    socket->SetRecvCallback(MakeCallback(&ReceiveData));
+// Conecta a um nó vizinho
+void TcpApp::EstablishNeighborLink (Ipv4Address neighbor_address) {
+
+    this->sender_socket->SetConnectCallback (
+        MakeCallback(&TcpApp::ConnectionSucceeded, this),
+        MakeCallback(&TcpApp::ConnectionFailed, this)
+    );
+    InetSocketAddress remote = InetSocketAddress(neighbor_address, this->port);
+    this->sender_socket->Connect(remote);
+    NS_LOG_INFO("nó "<< this->id << " conecta com " << neighbor_address);
 }
 
-// Configuração do socket em cada nó
-void ConfigureSocket(Ptr<Node> node, Address localAddress) {
-    Ptr<Socket> recvSocket = Socket::CreateSocket(node, TcpSocketFactory::GetTypeId());
-    recvSocket->Bind(localAddress);
-    recvSocket->Listen();
-    recvSocket->SetAcceptCallback(
-        MakeNullCallback<bool, Ptr<Socket>, const Address &>(),
-        MakeCallback(&AcceptConnection));
+// Callback para conexão bem-sucedida
+void TcpApp::ConnectionSucceeded(Ptr<Socket> socket) {
+    NS_LOG_INFO("Conexão bem-sucedida");
+}
 
-    NS_LOG_INFO("Nó " << node->GetId() << " está ouvindo em "
-                      << InetSocketAddress::ConvertFrom(localAddress).GetIpv4()
-                      << ":" << InetSocketAddress::ConvertFrom(localAddress).GetPort());
+// Callback para falha de conexão
+void TcpApp::ConnectionFailed(Ptr<Socket> socket) {
+    NS_LOG_INFO("Falha na conexão");
+}
+
+// Callback para solicitações de conexão
+bool TcpApp::ValidateConnection(Ptr<Socket> socket, const Address& from) {
+    NS_LOG_INFO("Conexão solicitada de: " << from);
+    return true;
+}
+
+// Envia um pacote com o número fornecido
+void TcpApp::SendPacket (int32_t number) {
+    
+    int32_t networkOrderNumber = htonl(number);
+    Ptr<Packet> packet = Create<Packet>((uint8_t *)&networkOrderNumber, sizeof(networkOrderNumber));
+    this->sender_socket->Send(packet);
+    NS_LOG_INFO("nó "<< this->id << " manda " << number);
+    sender_socket->Close();
 }
 
 int main(int argc, char *argv[]) {
-    LogComponentEnable("LinearTopologySimulation", LOG_LEVEL_INFO);
 
+    //LogComponentEnable("Atividade2", LOG_LEVEL_INFO);  // Habilita NS_LOG_INFO para "Atividade2"
+    
+    // Cria nós
     NodeContainer nodes;
     nodes.Create(5);
 
@@ -155,16 +272,24 @@ int main(int argc, char *argv[]) {
     Ipv4InterfaceContainer interfaces = address.Assign(devices);
 
     // Configurar sockets para cada nó
-    for (uint32_t i = 0; i < nodes.GetN(); ++i) {
-        Address localAddress = InetSocketAddress(interfaces.GetAddress(i), 8000 + i);
-        ConfigureSocket(nodes.Get(i), localAddress);
+    for (int i = 0; i < NUM_NODES; i++) {
+        Ptr<TcpApp> application = CreateObject<TcpApp>();
+        if (i == 0) {
+            // Configuração para o nó 0
+            application->ConfigureApplication(i, nodes.Get(i), nullptr, nullptr, interfaces.GetAddress(i + 1), interfaces.GetAddress(i + 1), true);
+        } else if (i == NUM_NODES - 1) {
+            // Configuração para o ultimo no
+            application->ConfigureApplication(i, nodes.Get(i), nullptr, nullptr, interfaces.GetAddress(i - 1), interfaces.GetAddress(i - 1), true);
+        } else {
+            // Configuração para os nós intermediários
+            application->ConfigureApplication(i, nodes.Get(i), nullptr, nullptr, interfaces.GetAddress(i + 1), interfaces.GetAddress(i - 1), false);
+        }
+        application->SetStartTime(Seconds(1.));
+        application->SetStopTime(Seconds(30));
+        nodes.Get(i)->AddApplication(application);
     }
 
-    // Enviar dado inicial do N0
-    Ptr<Socket> initialSocket = Socket::CreateSocket(nodes.Get(0), TcpSocketFactory::GetTypeId());
-    Simulator::Schedule(Seconds(1.0), &SendData, initialSocket, InetSocketAddress(Ipv4Address("10.0.0.2"), 8001), GenerateRandomNumber());
-
-    Simulator::Stop(Seconds(30.0));
+    Simulator::Stop(Seconds(30));
     Simulator::Run();
     Simulator::Destroy();
 
