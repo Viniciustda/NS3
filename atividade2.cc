@@ -157,7 +157,7 @@ void TcpApp::StartApplication(void) {
     // Configuração do socket receptor
     InetSocketAddress local = InetSocketAddress(Ipv4Address::GetAny(), port);
     if (receiver_socket->Bind(local) == -1) {
-      NS_FATAL_ERROR("Failed to bind socket");
+      NS_FATAL_ERROR("Not found socket");
     }
     receiver_socket->Listen();
     receiver_socket->SetAcceptCallback(
@@ -188,12 +188,12 @@ void TcpApp::StopApplication(void) {
         this->sender_socket->Close();
         this->sender_socket = nullptr;
     }
-    NS_LOG_UNCOND("Aplicação encerrada");
+    NS_LOG_UNCOND("Fim da aplicação");
 }
 
 // Callback chamado quando uma conexão é aceita
-void TcpApp::HandleConnectionAccept(Ptr<Socket> s, const Address& from) {
-    s->SetRecvCallback(MakeCallback(&TcpApp::ProcessReceivedPacket, this));
+void TcpApp::HandleConnectionAccept(Ptr<Socket> socket, const Address& from) {
+    socket->SetRecvCallback(MakeCallback(&TcpApp::ProcessReceivedPacket, this));
 }
 
 // Callback chamado ao receber um pacote
@@ -222,7 +222,7 @@ void TcpApp::ProcessReceivedPacket(Ptr<Socket> socket) {
         receivedNumber = ntohl(networkOrderNumber); // Converte o número para ordem do host
 
         // Exibe o número recebido no log
-        NS_LOG_UNCOND("no: " << this->id << " recebeu: " << receivedNumber);
+        NS_LOG_UNCOND("Nó " << this->id << " recebeu: " << receivedNumber);
 
         // Verifica condições específicas para o nó 1. N1 passa a gerar pacote e envia para N2, N0 nao participa mais da simulacao
         if (this->id == 1 && inetFrom.GetIpv4() == "10.0.0.1") {
@@ -260,7 +260,7 @@ void TcpApp::EstablishNeighborLink(Ipv4Address neighbor_address) {
     );
     InetSocketAddress remote = InetSocketAddress(neighbor_address, this->port);
     this->sender_socket->Connect(remote);
-    NS_LOG_INFO("nó "<< this->id << " conecta com " << neighbor_address);
+    NS_LOG_INFO("Nó "<< this->id << " conectou com " << neighbor_address);
 }
 
 // Callback para conexão bem-sucedida
@@ -286,7 +286,7 @@ void TcpApp::SendPacket(int32_t number) {
     Ptr<Packet> packet = Create<Packet>((uint8_t *)&networkOrderNumber, sizeof(networkOrderNumber));
     this->sender_socket->Send(packet);
     sender_socket->Close();
-    NS_LOG_INFO("nó "<< this->id << " envia " << number);
+    NS_LOG_INFO("Nó "<< this->id << " enviou " << number);
 }
 
 int main(int argc, char *argv[]) {
