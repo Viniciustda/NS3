@@ -285,8 +285,8 @@ void TcpApp::SendPacket(int32_t number) {
     int32_t networkOrderNumber = htonl(number);
     Ptr<Packet> packet = Create<Packet>((uint8_t *)&networkOrderNumber, sizeof(networkOrderNumber));
     this->sender_socket->Send(packet);
-    NS_LOG_INFO("nó "<< this->id << " manda " << number);
     sender_socket->Close();
+    NS_LOG_INFO("nó "<< this->id << " envia " << number);
 }
 
 int main(int argc, char *argv[]) {
@@ -311,9 +311,9 @@ int main(int argc, char *argv[]) {
     mobility.SetPositionAllocator("ns3::GridPositionAllocator",
                                   "MinX", DoubleValue(0.0),
                                   "MinY", DoubleValue(0.0),
-                                  "DeltaX", DoubleValue(20.0),
+                                  "DeltaX", DoubleValue(5.0),
                                   "DeltaY", DoubleValue(0.0),
-                                  "GridWidth", UintegerValue(5),
+                                  "GridWidth", UintegerValue(NUM_NODES),
                                   "LayoutType", StringValue("RowFirst"));
     mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
     mobility.Install(nodes);
@@ -334,7 +334,7 @@ int main(int argc, char *argv[]) {
             // Configuração para o nó 0
             application->ConfigureApplication(i, nodes.Get(i), nullptr, nullptr, interfaces.GetAddress(i + 1), interfaces.GetAddress(i + 1), true);
         } else if (i == NUM_NODES - 1) {
-            // Configuração para o ultimo no
+            // Configuração para o último nó
             application->ConfigureApplication(i, nodes.Get(i), nullptr, nullptr, interfaces.GetAddress(i - 1), interfaces.GetAddress(i - 1), true);
         } else {
             // Configuração para os nós intermediários
