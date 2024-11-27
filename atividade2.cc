@@ -1,3 +1,18 @@
+/*
+A presente atividade consiste na criação e execução de um cenário de redes no NS3. Este cenário deve atender as seguintes especificações:
+
+    1. Implementar uma topologia em barra com 5 nós (os nós não devem mudar de posição)
+
+                  N0 ------- N1 ------- N2 ------- N3 ------- N4
+
+    2. Configurar um canal de comunicação sem fio entre os nós
+    3. Utilize o protocolo de internet (TCP/IPv4), onde o endereço da rede deve ser 10.0.0.0 e mascara 255.0.0.0
+    4. Desenvolva uma aplicação simples:
+        a. Cada nó deve ter dois sockets (um para enviar dados e outro para ouvir)
+        b. O nó N0 deve enviar (pelo socket) um valor inteiro aleatório (entre 0 e 100) apenas para seu vizinho N1, este por sua vez deve imprimir o valor recebido no terminal e encaminhar o dado para N2. O procedimento deve ser repetido até alcançar N4, onde N4 deve imprimir o valor recebido no terminal, gerar um novo valor aleatório (entre 0 e 100) e enviar para o seu vizinho N3, este por sua vez deve imprimir o valor recebido no terminal e encaminhar o dado para N2. O procedimento deve ser repetido até alcançar N1, onde N1 deve imprimir o valor recebido no terminal, gerar um novo valor aleatório (entre 0 e 100) e repetir o mesmo procedimento.
+    5. O tempo total da simulação deve ser de 30 segundos.
+*/
+
 #include "ns3/core-module.h"             // Módulo central do NS-3 (simulação de eventos, logs, etc.)
 #include "ns3/network-module.h"          // Módulo para abstrações de rede
 #include "ns3/internet-module.h"         // Módulo para pilha de protocolos TCP/IP
@@ -11,6 +26,47 @@ using namespace ns3;
 #define NUM_NODES 5                      // Define o número de nós na simulação
 
 NS_LOG_COMPONENT_DEFINE("Atividade2");   // Define o componente de log para "Atividade2"
+
+/*
+    Fluxo de comunicaçao:
+
+    NO -> N1 -> N2 -> N3 -> N4
+    N4 -> N3 -> N2 -> N1
+    N1 -> N2 -> N3 -> N4
+    N4 -> N3 -> N2 -> N1
+    N1 -> N2 -> N3 -> N4
+    ...
+    
+    Ou seja:
+
+    N0:
+        Gera um número aleatório e envia para N1.
+        Após o envio inicial, não faz mais nada.
+
+    N1:
+        Recebe o valor.
+        Sempre imprime o valor recebido.
+        Se o valor veio de N0, encaminha para N2.
+        Se o valor veio de N2, gera um novo número e envia para N2.
+
+    N2:
+    	Sempre imprime o valor recebido.
+    	Sempre encaminham o valor recebido:
+            De N1 para N3 (se veio do menor).
+            De N3 para N1 (se veio do maior).
+    N3:
+    	Sempre imprime o valor recebido.
+        Sempre encaminham o valor recebido:
+            De N2 para N4 (se veio do menor).
+            De N4 para N2 (se veio do maior).
+
+    N4:
+        Recebe o valor.
+        Sempre imprime o valor recebido.
+        Gera um novo número e envia para N3.
+
+    Duração: 30s
+ */
 
 // Função para gerar números aleatórios
 int GenerateRandomValue() {
@@ -80,7 +136,7 @@ TypeId TcpApp::GetTypeId(void) {
 }
 
 // Configuração inicial da aplicação
-void TcpApp::ConfigureApplication (int id,Ptr<Node> node,Ptr<Socket> sender_socket,Ptr<Socket> receiver_socket,Ipv4Address right_neighbor_ip,Ipv4Address left_neighbor_ip,bool generator = false) {
+void TcpApp::ConfigureApplication(int id,Ptr<Node> node,Ptr<Socket> sender_socket,Ptr<Socket> receiver_socket,Ipv4Address right_neighbor_ip,Ipv4Address left_neighbor_ip,bool generator = false) {
     
     this->id = id;
     this->node = node;
@@ -92,7 +148,7 @@ void TcpApp::ConfigureApplication (int id,Ptr<Node> node,Ptr<Socket> sender_sock
 }
 
 // Método chamado ao iniciar a aplicação
-void TcpApp::StartApplication (void) {
+void TcpApp::StartApplication(void) {
 
     // Criação de sockets para envio e recepção de pacotes
     Ptr<Socket> receiver_socket = Socket::CreateSocket (this->node, TcpSocketFactory::GetTypeId ());
@@ -113,7 +169,7 @@ void TcpApp::StartApplication (void) {
     this->sender_socket = sender_socket;
 
     // O primeiro nó gera e envia o primeiro número
-    if(this->id == 0){
+    if (this->id == 0) {
         int32_t number =  GenerateRandomValue();
         EstablishNeighborLink(this->left_neighbor_ip);
         SendPacket(number);
@@ -196,7 +252,7 @@ void TcpApp::ProcessReceivedPacket(Ptr<Socket> socket) {
 }
 
 // Conecta a um nó vizinho
-void TcpApp::EstablishNeighborLink (Ipv4Address neighbor_address) {
+void TcpApp::EstablishNeighborLink(Ipv4Address neighbor_address) {
 
     this->sender_socket->SetConnectCallback (
         MakeCallback(&TcpApp::ConnectionSucceeded, this),
@@ -224,7 +280,7 @@ bool TcpApp::ValidateConnection(Ptr<Socket> socket, const Address& from) {
 }
 
 // Envia um pacote com o número fornecido
-void TcpApp::SendPacket (int32_t number) {
+void TcpApp::SendPacket(int32_t number) {
     
     int32_t networkOrderNumber = htonl(number);
     Ptr<Packet> packet = Create<Packet>((uint8_t *)&networkOrderNumber, sizeof(networkOrderNumber));
